@@ -1,4 +1,391 @@
+ Cellule 2 — Base de données & données initiales
 
+import sqlite3, hashlib
+from datetime import date
+DB = 'terrafisc.db'
+
+def get_db():
+    c = sqlite3.connect(DB)
+    c.row_factory = sqlite3.Row
+    c.execute('PRAGMA foreign_keys=ON')
+    return c
+
+def h(p): return hashlib.sha256(p.encode()).hexdigest()
+
+def init_db():
+    conn = get_db(); c = conn.cursor()
+    c.executescript('''
+    CREATE TABLE IF NOT EXISTS bureau(
+        bureau_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom          VARCHAR(80) NOT NULL,
+        code         VARCHAR(10),
+        description  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS personnel(
+        personnel_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom             VARCHAR(30) NOT NULL,
+        prenom          VARCHAR(30),
+        email           TEXT UNIQUE NOT NULL,
+        mot_de_passe    TEXT NOT NULL,
+        telephone       VARCHAR(15),
+        dateNaissance   DATE,
+        fonction        TEXT,
+        role            TEXT NOT NULL CHECK(role IN ("chef_centre","chef_bureau","controleur","agent")),
+        adresse         VARCHAR(100),
+        superieur_id    INTEGER REFERENCES personnel(personnel_id),
+        bureau_id       INTEGER REFERENCES bureau(bureau_id),
+        annee_integration INTEGER,
+    photo_profil      TEXT
+    );
+    CREATE TABLE IF NOT EXISTS activite(
+        activite_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom           VARCHAR(100),
+        type_activite VARCHAR(30),
+        description   TEXT,
+        dateDebut     DATE,
+        dateFin       DATE,
+        statut        VARCHAR(20) DEFAULT "Planifiee",
+        bureau_id     INTEGER REFERENCES bureau(bureau_id),
+        propose_par   INTEGER REFERENCES personnel(personnel_id),
+        validee_par   INTEGER REFERENCES personnel(personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS proposition_activite(
+        prop_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        description   TEXT,
+        type_activite VARCHAR(30),
+        date_prop     DATE,
+        statut        VARCHAR(20) DEFAULT "En attente",
+        propose_par   INTEGER REFERENCES personnel(personnel_id),
+        destine_a     INTEGER REFERENCES personnel(personnel_id),
+        commentaire_reponse TEXT
+    );
+    CREATE TABLE IF NOT EXISTS performance(
+        performance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        efficacite     INTEGER CHECK(efficacite BETWEEN 0 AND 100),
+        note           INTEGER CHECK(note BETWEEN 0 AND 20),
+        prime          VARCHAR(50),
+        commentaire    TEXT,
+        personnel_id   INTEGER REFERENCES personnel(personnel_id),
+        evalue_par     INTEGER REFERENCES personnel(personnel_id),
+        date_eval      DATE,
+        mois           INTEGER,
+        annee          INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS employe_mois(
+        em_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        personnel_id   INTEGER REFERENCES personnel(personnel_id),
+        mois           INTEGER NOT NULL,
+        annee          INTEGER NOT NULL,
+        note_finale    REAL,
+        motif          TEXT,
+        designe_par    INTEGER REFERENCES personnel(personnel_id),
+        date_designation DATE,
+        UNIQUE(mois, annee)
+    );
+    CREATE TABLE IF NOT EXISTS tache(
+        tache_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        libelle      VARCHAR(100),
+        description  TEXT,
+        dateDebut    DATE,
+        dateFin      DATE,
+        statut       VARCHAR(30) DEFAULT "Non demarre",
+        priorite     VARCHAR(20) DEFAULT "Normale",
+        activite_id  INTEGER REFERENCES activite(activite_id),
+        performance_id INTEGER REFERENCES performance(performance_id)
+    );
+    CREATE TABLE IF NOT EXISTS affecter(
+        affect_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        tache_id         INTEGER REFERENCES tache(tache_id),
+        personnel_id     INTEGER REFERENCES personnel(personnel_id),
+        role_affect      TEXT DEFAULT "Executant",
+        date_affectation DATE,
+        date_retrait     DATE,
+        actif            INTEGER DEFAULT 1,
+        assigne_par      INTEGER REFERENCES personnel(personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS notification(
+        notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        titre           TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        type_notif      VARCHAR(30) DEFAULT "info",
+        dateEnvoie      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        statut          VARCHAR(20) DEFAULT "Non lue",
+        tache_id        INTEGER REFERENCES tache(tache_id),
+        destinataire_id INTEGER REFERENCES personnel(personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS signalement(
+        signalement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        description    TEXT,
+        dateEnvoie     DATE,
+        statut         VARCHAR(30) DEFAULT "Ouvert",
+        reponse        TEXT,
+        personnel_id   INTEGER REFERENCES personnel(personnel_id),
+        tache_id       INTEGER REFERENCES tache(tache_id),
+        destine_a      INTEGER REFERENCES personnel(personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS idee(
+        idee_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        description TEXT,
+        dateRecue   DATE,
+        statut      VARCHAR(30) DEFAULT "Soumise",
+        activite_id INTEGER REFERENCES activite(activite_id)
+    );
+    CREATE TABLE IF NOT EXISTS proposition_idee(
+        idee_id      INTEGER REFERENCES idee(idee_id),
+        personnel_id INTEGER REFERENCES personnel(personnel_id),
+        PRIMARY KEY(idee_id, personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS avis(
+        avis_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        commentaire  TEXT,
+        note         INTEGER CHECK(note BETWEEN 1 AND 5),
+        dateEnvoie   DATE,
+        personnel_id INTEGER REFERENCES personnel(personnel_id)
+    );
+    CREATE TABLE IF NOT EXISTS compteRendu(
+        cr_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        dateRendue   DATE,
+        contenu      TEXT NOT NULL,
+        statut       VARCHAR(20) DEFAULT "Brouillon",
+        personnel_id INTEGER REFERENCES personnel(personnel_id),
+        tache_id     INTEGER REFERENCES tache(tache_id)
+    );
+    CREATE TABLE IF NOT EXISTS telepaiement(
+        tp_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        reference        TEXT UNIQUE NOT NULL,
+        contribuable_nom TEXT NOT NULL,
+        contribuable_nif TEXT,
+        type_impot       TEXT NOT NULL,
+        montant          REAL NOT NULL,
+        montant_paye     REAL DEFAULT 0,
+        statut           VARCHAR(30) DEFAULT "En attente",
+        mode_paiement    TEXT,
+        date_echeance    DATE,
+        date_paiement    DATE,
+        bureau_id        INTEGER REFERENCES bureau(bureau_id),
+        agent_id         INTEGER REFERENCES personnel(personnel_id),
+        notes            TEXT
+    );
+    ''');
+    conn.commit(); conn.close()
+    print('✅ Base de données créée avec succès')
+
+def seed():
+    conn = get_db(); c = conn.cursor()
+    if c.execute('SELECT COUNT(*) FROM personnel').fetchone()[0] > 0:
+        conn.close(); print('ℹ️  Données déjà présentes, seed ignoré'); return
+
+    # ── 5 BUREAUX RÉELS ──
+    bureaux = [
+        ('Gestion des Contribuables et Services','GCS','Accueil, immatriculation, assistance et gestion des dossiers des contribuables'),
+        ('Recouvrement','REC','Recouvrement des créances fiscales, mise en demeure, contraintes'),
+        ('Bureau des Domaines','DOM','Gestion du domaine national, titres fonciers, concessions'),
+        ('Conservation Foncière','COF','Conservation des titres de propriété, mutations, hypothèques'),
+        ('Cadastre','CAD','Levés cadastraux, plans fonciers, fiscalité immobilière'),
+    ]
+    c.executemany('INSERT INTO bureau(nom,code,description) VALUES(?,?,?)', bureaux)
+
+    pw = h('admin123')
+
+    # ── CHEF DE CENTRE ──
+    c.execute("INSERT INTO personnel(nom,prenom,email,mot_de_passe,fonction,role,bureau_id,telephone,annee_integration) VALUES(?,?,?,?,?,?,?,?,?)",
+              ('DIALLO','PENDA','chef.centre@terrafisc.sn',pw,'Directeur du Centre des Impôts','chef_centre',1,'771000001',2015))
+    cc = c.lastrowid
+
+    # ── CHEFS DE BUREAU (1 par bureau) ──
+    chefs_data = [
+        ('DIOP','ABDOUL','cb.gcs@terrafisc.sn','Chef du Bureau GCS','chef_bureau',1),
+        ('TOURE','Ibrahima','cb.rec@terrafisc.sn','Chef du Bureau Recouvrement','chef_bureau',2),
+        ('MBENGUE','ABDOURAHMANE','cb.dom@terrafisc.sn','Chef du Bureau des Domaines','chef_bureau',3),
+        ('DIOUF','ELHADJI IBRAHIMA','cb.cof@terrafisc.sn','Chef de la Conservation Foncière','chef_bureau',4),
+        ('SECK','FALLOU','cb.cad@terrafisc.sn','Chef du Cadastre','chef_bureau',5),
+    ]
+    cb_ids = []
+    for i,(nom,prenom,email,fonc,role,bid) in enumerate(chefs_data):
+        c.execute("INSERT INTO personnel(nom,prenom,email,mot_de_passe,fonction,role,bureau_id,superieur_id,telephone,annee_integration) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  (nom,prenom,email,pw,fonc,role,bid,cc,f'77200000{i+1}',2017+i))
+        cb_ids.append(c.lastrowid)
+
+    # ── CONTRÔLEURS (10 par bureau) ──
+    ctrl_data = [
+        ('KA','AMINATA','ctrl.gcs1@terrafisc.sn','Contrôleur',1,cb_ids[0]),
+        ('DIAW','AMI','ctrl.gcs2@terrafisc.sn','Inspecteur',1,cb_ids[0]),
+        ('KEBE','OUSMANE','ctrl.rec1@terrafisc.sn','Contrôleur',2,cb_ids[1]),
+        ('DIALLO','MOUHAMADOUL MOUKHTAR','ctrl.rec2@terrafisc.sn','Inspecteur',2,cb_ids[1]),
+        ('SOW','Pape','ctrl.dom1@terrafisc.sn','Contrôleur',3,cb_ids[2]),
+        ('FAYE','Aminata','ctrl.dom2@terrafisc.sn','Inspecteur',3,cb_ids[2]),
+        ('DIOP','Serigne','ctrl.cof1@terrafisc.sn','Contrôleur',4,cb_ids[3]),
+        ('CISSE','Adja','ctrl.cof2@terrafisc.sn','Inspecteur',4,cb_ids[3]),
+        ('TOURE','Boubacar','ctrl.cad1@terrafisc.sn','Contrôleur',5,cb_ids[4]),
+        ('LY','Marième','ctrl.cad2@terrafisc.sn','Inspecteur',5,cb_ids[4]),
+    ]
+    ctrl_ids = []
+    for i,(nom,prenom,email,fonc,bid,sup) in enumerate(ctrl_data):
+        c.execute("INSERT INTO personnel(nom,prenom,email,mot_de_passe,fonction,role,bureau_id,superieur_id,telephone,annee_integration) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  (nom,prenom,email,pw,fonc,'controleur',bid,sup,f'77300{i:04d}',2019+i%4))
+        ctrl_ids.append(c.lastrowid)
+
+    # ── AGENTS (30 par bureau) ──
+    agents_data = [
+        ('NGOM','Awa','agent.gcs1@terrafisc.sn','Agent d\'accueil',1,ctrl_ids[0]),
+        ('BADJI','Lamine','agent.gcs2@terrafisc.sn','Agent de gestion',1,ctrl_ids[0]),
+        ('BODIAN','Seynabou','agent.gcs3@terrafisc.sn','Téléconseiller',1,ctrl_ids[1]),
+        ('DIEME','Aliou','agent.rec1@terrafisc.sn','Agent de recouvrement',2,ctrl_ids[2]),
+        ('CAMARA','Khady','agent.rec2@terrafisc.sn','Agent de recouvrement',2,ctrl_ids[2]),
+        ('MENDY','Ismaila','agent.rec3@terrafisc.sn','Agent de recouvrement',2,ctrl_ids[3]),
+        ('BASSENE','Ndéye','agent.dom1@terrafisc.sn','Agent domanial',3,ctrl_ids[4]),
+        ('DIATTA','Omar','agent.dom2@terrafisc.sn','Agent domanial',3,ctrl_ids[4]),
+        ('MANGA','Madeleine','agent.dom3@terrafisc.sn','Agent domanial',3,ctrl_ids[5]),
+        ('GOMIS','Pascal','agent.cof1@terrafisc.sn','Agent foncier',4,ctrl_ids[6]),
+        ('SAMBOU','Bernadette','agent.cof2@terrafisc.sn','Agent foncier',4,ctrl_ids[6]),
+        ('TENDENG','Joseph','agent.cof3@terrafisc.sn','Agent foncier',4,ctrl_ids[7]),
+        ('SANE','Ousmane','agent.cad1@terrafisc.sn','Géomètre',5,ctrl_ids[8]),
+        ('BADIANE','Célestine','agent.cad2@terrafisc.sn','Technicien cadastral',5,ctrl_ids[8]),
+        ('COLY','Augustin','agent.cad3@terrafisc.sn','Technicien cadastral',5,ctrl_ids[9]),
+    ]
+    agent_ids = []
+    for i,(nom,prenom,email,fonc,bid,sup) in enumerate(agents_data):
+        c.execute("INSERT INTO personnel(nom,prenom,email,mot_de_passe,fonction,role,bureau_id,superieur_id,telephone,annee_integration) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  (nom,prenom,email,pw,fonc,'agent',bid,sup,f'77400{i:04d}',2020+i%5))
+        agent_ids.append(c.lastrowid)
+
+    # ── ACTIVITÉS PAR BUREAU ──
+    activites_data = [
+        ('Campagne immatriculation NIF 2025','Campagne','Sensibilisation et immatriculation des contribuables non identifiés','2025-04-01','2025-06-30','En cours',1),
+        ('Audit des dossiers GCS Q1','Audit','Vérification et mise à jour des dossiers contribuables','2025-03-01','2025-03-31','Terminee',1),
+        ('Opération recouvrement arrières T1','Mission','Recouvrement des créances fiscales du 1er trimestre','2025-04-10','2025-05-31','En cours',2),
+        ('Formation procédures de mise en demeure','Formation','Formation des agents sur les nouvelles procédures','2025-05-15','2025-05-17','Planifiee',2),
+        ('Révision des titres fonciers zone industrielle','Mission','Mise à jour du registre des titres fonciers','2025-04-01','2025-07-31','En cours',3),
+        ('Atelier foncier rural','Atelier','Sensibilisation sur la sécurisation foncière rurale','2025-06-01','2025-06-03','Planifiee',3),
+        ('Conservation titres quartier Almadies','Mission','Traitement des mutations en attente','2025-04-15','2025-05-30','En cours',4),
+        ('Informatisation registre hypothèques','Projet','Numérisation des actes hypothécaires','2025-01-01','2025-12-31','En cours',4),
+        ('Levé cadastral zone périurbaine','Mission','Mise à jour du plan cadastral','2025-05-01','2025-08-31','Planifiee',5),
+        ('Mise à jour base fiscalité immobilière','Mission','Actualisation des valeurs locatives','2025-04-01','2025-06-30','En cours',5),
+    ]
+    act_ids = []
+    for t in activites_data:
+        c.execute('INSERT INTO activite(nom,type_activite,description,dateDebut,dateFin,statut,bureau_id) VALUES(?,?,?,?,?,?,?)',t)
+        act_ids.append(c.lastrowid)
+
+    # ── TÂCHES ──
+    taches_data = [
+        ('Préparation formulaires NIF','Imprimer et distribuer les formulaires','2025-04-01','2025-04-05','Terminee','Haute',act_ids[0]),
+        ('Saisie des nouvelles immatriculations','Saisir les données dans le système','2025-04-06','2025-06-30','En cours','Normale',act_ids[0]),
+        ('Rapport audit Q1 GCS','Rédiger le rapport final de l\'audit','2025-03-25','2025-03-31','Terminee','Haute',act_ids[1]),
+        ('Identification créanciers défaillants','Lister les contribuables en arriéré','2025-04-10','2025-04-20','Terminee','Haute',act_ids[2]),
+        ('Émission mises en demeure','Préparer et envoyer les mises en demeure','2025-04-20','2025-05-10','En cours','Haute',act_ids[2]),
+        ('TDR formation mise en demeure','Rédiger les termes de référence','2025-04-20','2025-04-30','En cours','Normale',act_ids[3]),
+        ('Convocations formation','Envoyer les convocations aux participants','2025-05-01','2025-05-10','Non demarre','Normale',act_ids[3]),
+        ('Inventaire titres fonciers zone ind.','Dresser la liste des titres concernés','2025-04-01','2025-04-15','Terminee','Haute',act_ids[4]),
+        ('Mise à jour registre foncier','Actualiser le registre informatisé','2025-04-15','2025-07-31','En cours','Normale',act_ids[4]),
+        ('Traitement mutations en attente','Traiter les dossiers de mutation','2025-04-15','2025-05-30','En cours','Haute',act_ids[6]),
+        ('Scan actes hypothécaires','Numériser les actes du registre A','2025-01-15','2025-06-30','En cours','Normale',act_ids[7]),
+        ('Actualisation valeurs locatives','Mettre à jour les données fiscales','2025-04-01','2025-06-30','En cours','Haute',act_ids[9]),
+    ]
+    tache_ids = []
+    for t in taches_data:
+        c.execute('INSERT INTO tache(libelle,description,dateDebut,dateFin,statut,priorite,activite_id) VALUES(?,?,?,?,?,?,?)',t)
+        tache_ids.append(c.lastrowid)
+
+    # ── AFFECTATIONS ──
+    affects = [
+        (tache_ids[0],agent_ids[0],'Principal','2025-04-01',ctrl_ids[0]),
+        (tache_ids[1],agent_ids[1],'Executant','2025-04-06',ctrl_ids[0]),
+        (tache_ids[1],agent_ids[2],'Executant','2025-04-06',ctrl_ids[0]),
+        (tache_ids[2],agent_ids[1],'Principal','2025-03-20',ctrl_ids[1]),
+        (tache_ids[3],agent_ids[3],'Principal','2025-04-10',ctrl_ids[2]),
+        (tache_ids[4],agent_ids[4],'Executant','2025-04-20',ctrl_ids[2]),
+        (tache_ids[4],agent_ids[5],'Executant','2025-04-20',ctrl_ids[3]),
+        (tache_ids[5],agent_ids[6],'Principal','2025-04-20',ctrl_ids[4]),
+        (tache_ids[7],agent_ids[6],'Principal','2025-04-01',ctrl_ids[4]),
+        (tache_ids[8],agent_ids[7],'Executant','2025-04-15',ctrl_ids[5]),
+        (tache_ids[9],agent_ids[9],'Principal','2025-04-15',ctrl_ids[6]),
+        (tache_ids[10],agent_ids[10],'Executant','2025-01-15',ctrl_ids[7]),
+        (tache_ids[11],agent_ids[13],'Principal','2025-04-01',ctrl_ids[9]),
+    ]
+    for (tid,pid,role,dt,sup) in affects:
+        c.execute('INSERT INTO affecter(tache_id,personnel_id,role_affect,date_affectation,actif,assigne_par) VALUES(?,?,?,?,1,?)',(tid,pid,role,dt,sup))
+        c.execute("INSERT INTO notification(titre,description,type_notif,tache_id,destinataire_id) VALUES(?,?,?,?,?)",
+                  ('Nouvelle tâche assignée','Vous avez une nouvelle tâche. Consultez votre tableau de bord.','tache',tid,pid))
+
+    # ── PERFORMANCES ──
+    perfs = [
+        (90,18,'75000 FCFA','Excellent travail sur la campagne NIF',agent_ids[0],ctrl_ids[0],'2025-03-31',3,2025),
+        (82,16,'50000 FCFA','Bonne rigueur documentaire',agent_ids[1],ctrl_ids[0],'2025-03-31',3,2025),
+        (95,19,'100000 FCFA','Performance exceptionnelle sur le recouvrement',agent_ids[3],ctrl_ids[2],'2025-03-31',3,2025),
+        (78,15,None,'Résultats satisfaisants, à améliorer',agent_ids[4],ctrl_ids[2],'2025-03-31',3,2025),
+        (88,17,'75000 FCFA','Très bonne gestion des titres fonciers',agent_ids[6],ctrl_ids[4],'2025-03-31',3,2025),
+        (70,14,None,'Quelques retards à corriger',agent_ids[7],ctrl_ids[5],'2025-03-31',3,2025),
+        (92,18,'75000 FCFA','Excellent sur les mutations foncières',agent_ids[9],ctrl_ids[6],'2025-03-31',3,2025),
+        (85,17,'50000 FCFA','Bon travail sur la numérisation',agent_ids[13],ctrl_ids[9],'2025-03-31',3,2025),
+    ]
+    perf_ids = []
+    for p in perfs:
+        c.execute('INSERT INTO performance(efficacite,note,prime,commentaire,personnel_id,evalue_par,date_eval,mois,annee) VALUES(?,?,?,?,?,?,?,?,?)',p)
+        perf_ids.append(c.lastrowid)
+
+    # ── EMPLOYÉ DU MOIS ── (3 derniers mois)
+    em_data = [
+        (agent_ids[3], 1, 2025, 18.5, 'Recouvrement exceptionnel : 98% du quota atteint, zéro réclamation', cb_ids[1]),
+        (agent_ids[0], 2, 2025, 17.8, 'Meilleure performance sur les immatriculations NIF du mois', cb_ids[0]),
+        (agent_ids[9], 3, 2025, 18.0, 'Excellence dans le traitement des mutations et délais respectés', cb_ids[3]),
+    ]
+    for (pid, mois, annee, note, motif, desig) in em_data:
+        c.execute('INSERT INTO employe_mois(personnel_id,mois,annee,note_finale,motif,designe_par,date_designation) VALUES(?,?,?,?,?,?,?)',
+                  (pid,mois,annee,note,motif,desig,'2025-'+str(mois).zfill(2)+'-28'))
+
+    # ── TÉLÉPAIEMENTS ──
+    tp_data = [
+        ('TP2025-001','SOCOCIM Industries','SN000001','Impôt sur les Sociétés',45000000,45000000,'Paye','Virement bancaire','2025-03-31','2025-03-28',1,agent_ids[0],None),
+        ('TP2025-002','AUCHAN Sénégal','SN000002','TVA mensuelle',12500000,12500000,'Paye','Mobile Money (Wave)','2025-04-20','2025-04-18',1,agent_ids[1],None),
+        ('TP2025-003','Groupe Maurel & Prom','SN000003','Taxe foncière',3200000,0,'En attente',None,'2025-04-30',None,5,agent_ids[13],'Contribuable en cours de constitution de dossier'),
+        ('TP2025-004','SENELEC','SN000004','Acompte IS',18000000,18000000,'Paye','Virement BCEAO','2025-03-31','2025-03-30',2,agent_ids[3],None),
+        ('TP2025-005','Air Sénégal','SN000005','Taxe sur les salaires',2800000,1400000,'Partiel','Mobile Money (Orange)','2025-04-15','2025-04-14',2,agent_ids[4],'Solde restant dû : 1 400 000 FCFA'),
+        ('TP2025-006','SDE (Société des Eaux)','SN000006','TVA mensuelle',8900000,0,'En retard',None,'2025-04-10',None,2,agent_ids[5],'Mise en demeure émise le 15/04/2025'),
+        ('TP2025-007','CBAO Banque','SN000007','Taxe foncière TF n°1234',950000,950000,'Paye','Carte bancaire','2025-03-15','2025-03-14',4,agent_ids[9],None),
+        ('TP2025-008','Résidence Les Almadies','SN000008','Contribution foncière bâtie',2100000,0,'En attente',None,'2025-05-31',None,4,agent_ids[10],'Dossier complet reçu'),
+        ('TP2025-009','Cabinet Géomètre Diop','SN000009','Droits de bornage',350000,350000,'Paye','Mobile Money (Wave)','2025-04-01','2025-04-01',5,agent_ids[13],None),
+        ('TP2025-010','Lotissement SICAP','SN000010','Taxe de plus-value immobilière',5600000,5600000,'Paye','Virement bancaire','2025-04-05','2025-04-04',3,agent_ids[6],None),
+    ]
+    for tp in tp_data:
+        c.execute('INSERT INTO telepaiement(reference,contribuable_nom,contribuable_nif,type_impot,montant,montant_paye,statut,mode_paiement,date_echeance,date_paiement,bureau_id,agent_id,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', tp)
+
+    # ── SIGNALEMENTS ──
+    c.execute("INSERT INTO signalement(description,dateEnvoie,statut,personnel_id,tache_id,destine_a) VALUES(?,?,?,?,?,?)",
+              ('Manque de données dans le système pour 3 contribuables inscrits. Impossible de finaliser la saisie.','2025-04-22','Ouvert',agent_ids[1],tache_ids[1],ctrl_ids[0]))
+    c.execute("INSERT INTO signalement(description,dateEnvoie,statut,personnel_id,tache_id,destine_a) VALUES(?,?,?,?,?,?)",
+              ('Contribuable TP2025-006 (SDE) non joignable. Risque de dépassement de délai.','2025-04-20','Ouvert',agent_ids[5],tache_ids[4],ctrl_ids[3]))
+
+    # ── PROPOSITIONS ──
+    c.execute("INSERT INTO proposition_activite(description,type_activite,date_prop,statut,propose_par,destine_a) VALUES(?,?,?,?,?,?)",
+              ('Organiser une journée portes ouvertes pour les nouveaux contribuables sur la procédure d\'immatriculation en ligne.','Atelier','2025-04-18','En attente',ctrl_ids[0],cb_ids[0]))
+    c.execute("INSERT INTO proposition_activite(description,type_activite,date_prop,statut,propose_par,destine_a) VALUES(?,?,?,?,?,?)",
+              ('Mettre en place un tableau de suivi partagé pour les mises en demeure en cours afin d\'éviter les doublons.','Mission','2025-04-20','Acceptee',ctrl_ids[2],cb_ids[1]))
+
+    # ── AVIS ──
+    c.execute("INSERT INTO avis(commentaire,note,dateEnvoie,personnel_id) VALUES(?,?,?,?)",('Interface claire, la section télépaiement est très utile.',5,'2025-04-25',agent_ids[0]))
+    c.execute("INSERT INTO avis(commentaire,note,dateEnvoie,personnel_id) VALUES(?,?,?,?)",('Ajouter un export Excel des télépaiements.',4,'2025-04-26',agent_ids[3]))
+    c.execute("INSERT INTO avis(commentaire,note,dateEnvoie,personnel_id) VALUES(?,?,?,?)",('Le module employé du mois motive vraiment l\'équipe !',5,'2025-04-27',agent_ids[9]))
+
+    conn.commit(); conn.close()
+    print('✅ Données insérées avec succès\n')
+    print('━'*58)
+    print('📋 COMPTES DE CONNEXION (mot de passe : admin123)')
+    print('━'*58)
+    print('  chef.centre@terrafisc.sn   →  Chef de Centre')
+    print('  cb.gcs@terrafisc.sn        →  Chef Bureau GCS')
+    print('  cb.rec@terrafisc.sn        →  Chef Bureau Recouvrement')
+    print('  cb.dom@terrafisc.sn        →  Chef Bureau Domaines')
+    print('  cb.cof@terrafisc.sn        →  Chef Conservation Foncière')
+    print('  cb.cad@terrafisc.sn        →  Chef Cadastre')
+    print('  ctrl.gcs1@terrafisc.sn     →  Contrôleur GCS')
+    print('  ctrl.rec1@terrafisc.sn     →  Contrôleur Recouvrement')
+    print('  agent.gcs1@terrafisc.sn    →  Agent GCS')
+    print('  agent.rec1@terrafisc.sn    →  Agent Recouvrement')
+    print('━'*58)
+
+init_db()
+seed()
 from flask import Flask, request, jsonify, render_template_string, session
 from flask_cors import CORS
 import sqlite3, threading, hashlib, json
