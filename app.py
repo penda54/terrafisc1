@@ -1,4 +1,4 @@
- Cellule 2 — Base de données & données initiales
+
 
 import sqlite3, hashlib
 from datetime import date
